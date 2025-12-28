@@ -1,0 +1,64 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID}}
+  SERVICE_NAME: vieneu-tts
+  REGION: asia-southeast1
+  REGISTRY: gcr.io
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.ref_name }}
+          region: ${{ env.REGION }}
+          # Note: GPU configuration is managed via Terraform, but the image update happens here.
+          # We use flags to ensure GPU configuration is maintained if not already set by TF.
+          # According to the doc, a minimum of 4 CPU and 16 GiB of memory is required for GPU.
+          flags: '--no-allow-unauthenticated --memory 16Gi --cpu 4 --max-instances 3 --min-instances 0 --no-cpu-throttling --gpu 1 --gpu-type nvidia-l4'
+          revision_traffic: 'LATEST=100'
+          env_vars: |
+            PYTHONUNBUFFERED=1
+            GRADIO_SERVER_NAME=0.0.0.0
