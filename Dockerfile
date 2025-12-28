@@ -8,39 +8,53 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT="/opt/venv" \
     PATH="/opt/venv/bin:$PATH"
 
-# Cài đặt Python 3.12 và dependencies
+# Cài đặt basic dependencies (runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
-    python3.12-dev \
     python3.12-venv \
     espeak-ng \
     libespeak-ng1 \
-    git \
     curl \
-    wget \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Config python default
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
-    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
-# Cài đặt uv
-RUN pip install --no-cache-dir uv
+# --- Stage: Builder ---
+FROM base AS builder
 
-# Thiết lập thư mục làm việc
-WORKDIR /workspace
+# Cài đặt build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12-dev \
+    git \
+    wget \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cài đặt pip cho 3.12 và uv
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
+    && pip install --no-cache-dir uv
+
+WORKDIR /build
+# Copy metadata files first for better caching
+COPY pyproject.toml uv.lock README.md ./
+
+# Cài đặt dependencies (không cài đặt project chính để tiết kiệm layer)
+RUN uv sync --no-dev --frozen --no-install-project
 
 # --- Stage: Production ---
 FROM base AS prod
+
+WORKDIR /workspace
+
+# Copy venv từ builder
+COPY --from=builder /opt/venv /opt/venv
+# Copy application code
 COPY . .
-# Enable frozen sync as we have the correct uv.lock
-RUN uv sync --no-dev
 
 # Port is handled by Cloud Run ($PORT)
-# CMD uses the port and host settings from environment variables
-CMD ["uv", "run", "gradio_app.py", "--server-name", "0.0.0.0"]
+CMD ["python", "gradio_app.py", "--server-name", "0.0.0.0"]
