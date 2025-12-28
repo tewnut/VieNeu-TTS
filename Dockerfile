@@ -15,8 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
-    python3.12-distutils \
-    python3-pip \
+    python3.12-venv \
     espeak-ng \
     libespeak-ng1 \
     git \
